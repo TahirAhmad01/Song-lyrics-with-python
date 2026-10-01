@@ -33,6 +33,8 @@ GRAY = "\033[38;5;242m"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_FILE = os.path.join(BASE_DIR, "song.m4a")
+AUDIO_OGG = os.path.join(BASE_DIR, "song.ogg")
+BIN_FFMPEG = os.path.join(BASE_DIR, "bin", "ffmpeg")
 AUDIO_PLAYER_BIN = os.path.join(BASE_DIR, "audio_player")
 YOUTUBE_URL = "https://www.youtube.com/watch?v=KQzmQ02hHFI"
 TOTAL_DURATION = 331  # ~ 5:31
@@ -65,8 +67,28 @@ signal.signal(signal.SIGTERM, cleanup)
 
 
 def ensure_audio_file():
-    """Check if song.m4a exists, otherwise download it via yt-dlp."""
+    """Check if song audio exists, otherwise download it via yt-dlp."""
+    system = platform.system()
+
+    # On Linux, prefer OGG format for native GStreamer / PipeWire playback
+    if system == "Linux" and os.path.exists(AUDIO_OGG) and os.path.getsize(AUDIO_OGG) > 100000:
+        return AUDIO_OGG
+
     if os.path.exists(AUDIO_FILE) and os.path.getsize(AUDIO_FILE) > 100000:
+        if system == "Linux" and not os.path.exists(AUDIO_OGG):
+            ffmpeg_cmd = BIN_FFMPEG if os.path.exists(BIN_FFMPEG) else shutil.which("ffmpeg")
+            if ffmpeg_cmd:
+                try:
+                    subprocess.run(
+                        [ffmpeg_cmd, "-y", "-i", AUDIO_FILE, "-c:a", "libvorbis", "-q:a", "6", AUDIO_OGG],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=True
+                    )
+                    if os.path.exists(AUDIO_OGG):
+                        return AUDIO_OGG
+                except Exception:
+                    pass
         return AUDIO_FILE
 
     print(f"{EMERALD}⬇️  Downloading song audio from YouTube...{RESET}")
@@ -94,6 +116,22 @@ def ensure_audio_file():
         sys.exit(1)
 
     print(f"{LIGHT_GREEN}✓ Audio downloaded successfully!{RESET}\n")
+
+    if system == "Linux":
+        ffmpeg_cmd = BIN_FFMPEG if os.path.exists(BIN_FFMPEG) else shutil.which("ffmpeg")
+        if ffmpeg_cmd:
+            try:
+                subprocess.run(
+                    [ffmpeg_cmd, "-y", "-i", AUDIO_FILE, "-c:a", "libvorbis", "-q:a", "6", AUDIO_OGG],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True
+                )
+                if os.path.exists(AUDIO_OGG):
+                    return AUDIO_OGG
+            except Exception:
+                pass
+
     return AUDIO_FILE
 
 
@@ -197,6 +235,9 @@ def start_audio_playback(file_path, start_offset=0.0):
             )
         else:
             # Linux players with seek support
+            if file_path.endswith(".m4a") and os.path.exists(AUDIO_OGG):
+                file_path = AUDIO_OGG
+
             if shutil.which("ffplay"):
                 args = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet"]
                 if start_offset > 0.0:
@@ -209,7 +250,15 @@ def start_audio_playback(file_path, start_offset=0.0):
                     args.extend([f"--start={start_offset}"])
                 args.append(file_path)
                 player_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            elif shutil.which("aplay"):
+            elif shutil.which("gst-play-1.0"):
+                args = ["gst-play-1.0", "-q", "--no-interactive"]
+                if start_offset > 0.0:
+                    args.extend(["-s", str(start_offset)])
+                args.append(file_path)
+                player_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif shutil.which("pw-play"):
+                player_process = subprocess.Popen(["pw-play", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elif shutil.which("aplay") and file_path.endswith(".wav"):
                 player_process = subprocess.Popen(["aplay", file_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"{GRAY}[Warning: Audio player could not be launched ({e}). Continuing lyrics display...]{RESET}")
