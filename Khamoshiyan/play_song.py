@@ -221,10 +221,25 @@ def start_audio_playback(file_path, start_offset=0.0):
     return player_process
 
 
+def parse_time(val):
+    """Parse float seconds or MM:SS / HH:MM:SS string into seconds."""
+    if val is None:
+        return None
+    val_str = str(val).strip()
+    if ":" in val_str:
+        parts = val_str.split(":")
+        if len(parts) == 2:
+            return float(parts[0]) * 60 + float(parts[1])
+        elif len(parts) == 3:
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    return float(val_str)
+
+
 def format_time(seconds):
     """Format seconds into MM:SS format."""
     m, s = divmod(max(0, int(seconds)), 60)
     return f"{m:02d}:{s:02d}"
+
 
 
 def print_banner():
@@ -313,14 +328,28 @@ def play():
     import argparse
     parser = argparse.ArgumentParser(description="Khamoshiyan Lyrics Player")
     parser.add_argument("--auto", action="store_true", help="Start automatically without waiting for Enter")
-    parser.add_argument("--start", type=float, default=0.0, help="Start playback at specific second offset")
+    parser.add_argument("--start", type=str, default="0", help="Start playback at specific second offset or MM:SS (e.g. 8 or 00:08)")
+    parser.add_argument("--end", type=str, default=None, help="Stop playback at specific second offset or MM:SS (e.g. 60 or 01:00)")
+    parser.add_argument("--duration", type=str, default=None, help="Duration to play in seconds or MM:SS (e.g. 45 or 00:45)")
     parser.add_argument("--preview", action="store_true", help="Fast preview mode (no waiting, display test)")
     args = parser.parse_args()
 
     audio_path = ensure_audio_file()
     print_banner()
 
-    start_offset = max(0.0, min(float(args.start), float(TOTAL_DURATION - 2)))
+    start_raw = parse_time(args.start) or 0.0
+    start_offset = max(0.0, min(float(start_raw), float(TOTAL_DURATION - 2)))
+
+    end_raw = parse_time(args.end)
+    if args.duration is not None:
+        dur_val = parse_time(args.duration)
+        if dur_val is not None:
+            end_raw = start_offset + dur_val
+
+    if end_raw is not None:
+        effective_end = max(start_offset + 1.0, min(float(end_raw), float(TOTAL_DURATION)))
+    else:
+        effective_end = float(TOTAL_DURATION)
 
     if not args.auto and not args.preview and start_offset == 0.0:
         try:
@@ -339,8 +368,8 @@ def play():
     idx = 0
     total_lines = len(LYRICS_TIMELINE)
 
-    # Fast-forward to current start offset
-    while idx < total_lines and LYRICS_TIMELINE[idx][0] + LYRICS_TIMELINE[idx][1] <= start_offset:
+    # Fast-forward to current start offset (skip lines that started before start_offset)
+    while idx < total_lines and LYRICS_TIMELINE[idx][0] + 1.0 <= start_offset:
         idx += 1
 
     try:
@@ -348,15 +377,26 @@ def play():
             target_time, duration, text, color, is_hl = LYRICS_TIMELINE[idx]
             elapsed = time.time() - start_time
 
+            # Check if we reached the requested end time
+            if not args.preview and elapsed >= effective_end:
+                break
+            if target_time >= effective_end:
+                break
+
             # If before target time, update the top clock and sleep briefly
             if not args.preview and elapsed < target_time:
-                time.sleep(min(target_time - elapsed, 0.03))
+                wait_time = min(target_time - elapsed, 0.03)
+                if elapsed + wait_time > effective_end:
+                    time.sleep(max(0, effective_end - elapsed))
+                    break
+                time.sleep(wait_time)
                 continue
 
             # Target timestamp arrived! Display header time
-            curr_str = format_time(elapsed if not args.preview else target_time)
+            curr_val = elapsed if not args.preview else target_time
+            curr_str = format_time(curr_val)
             tot_str = format_time(TOTAL_DURATION)
-            pct = min(100, int(((elapsed if not args.preview else target_time) / TOTAL_DURATION) * 100))
+            pct = min(100, int((curr_val / TOTAL_DURATION) * 100))
 
             bar_len = 25
             filled = int((pct / 100) * bar_len)
@@ -385,6 +425,8 @@ def play():
 
                 while printed_idx < n_chars:
                     curr_elapsed = time.time() - start_time
+                    if curr_elapsed >= effective_end:
+                        break
                     time_into_line = curr_elapsed - line_start_clk
                     progress_frac = min(1.0, max(0.0, time_into_line / type_duration))
                     target_chars = int(progress_frac * n_chars)
@@ -403,11 +445,14 @@ def play():
                 sys.stdout.write(RESET + "\n")
                 sys.stdout.flush()
 
+                if time.time() - start_time >= effective_end:
+                    break
+
             idx += 1
 
         if not args.preview:
-            # Wait for remaining audio to conclude
-            while time.time() - start_time < TOTAL_DURATION:
+            # Wait for remaining audio to conclude up to effective_end
+            while time.time() - start_time < effective_end:
                 elapsed = time.time() - start_time
                 curr_str = format_time(elapsed)
                 tot_str = format_time(TOTAL_DURATION)
@@ -415,11 +460,27 @@ def play():
                 bar_len = 25
                 filled = int((pct / 100) * bar_len)
                 bar = "━" * filled + "●" + "─" * (bar_len - filled)
-                sys.stdout.write(f"\r{GRAY}[{curr_str} / {tot_str}] {CYAN}{bar}{RESET} {DIM}{pct}%{RESET}   ")
+                sys.stdout.write(f"\r\033[K{GRAY}[{curr_str} / {tot_str}] {CYAN}{bar}{RESET} {DIM}{pct}%{RESET}")
                 sys.stdout.flush()
-                time.sleep(0.5)
+                time.sleep(0.15)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
-        print("\n\n" + CYAN + "✨ Song Finished! Thank you for listening! 💙 ✨" + RESET + "\n")
+        # Stop audio if process is still running
+        if player_process:
+            try:
+                player_process.terminate()
+                player_process.wait(timeout=0.5)
+            except Exception:
+                try:
+                    player_process.kill()
+                except Exception:
+                    pass
+
+        if end_raw is not None and effective_end < TOTAL_DURATION:
+            print("\n\n" + CYAN + f"✨ Reached end time [{format_time(effective_end)}]. Playback finished! 💙 ✨" + RESET + "\n")
+        else:
+            print("\n\n" + CYAN + "✨ Song Finished! Thank you for listening! 💙 ✨" + RESET + "\n")
 
     except KeyboardInterrupt:
         cleanup()

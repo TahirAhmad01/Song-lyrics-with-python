@@ -36,11 +36,25 @@ python3 play_song.py
 Press `[ENTER]` when prompted, sit back, and enjoy the song with lyrics!
 
 ### 2. Optional Command-Line Flags
-* **Start at any specific second** (audio seeks directly to that second):
+* **Start at any specific second or MM:SS** (audio seeks directly to that second):
   ```bash
   python3 play_song.py --start 39
+  # Or with MM:SS:
+  python3 play_song.py --start 00:39
   ```
   *(Example: `--start 39` jumps to the first Chorus, `--start 97` jumps to Verse 1, `--start 138` jumps to Verse 2)*
+
+* **Set End Time** (stop playback cleanly at any second or MM:SS):
+  ```bash
+  python3 play_song.py --start 39 --end 90
+  # Or with MM:SS:
+  python3 play_song.py --start 00:39 --end 01:30
+  ```
+
+* **Set Playback Duration** (play for N seconds from start):
+  ```bash
+  python3 play_song.py --start 39 --duration 45
+  ```
 
 * **Auto-start** (starts immediately without pressing Enter):
   ```bash
