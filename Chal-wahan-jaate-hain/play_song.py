@@ -522,10 +522,15 @@ def play():
                             break
                         time.sleep(0.02)
 
+                    # Flush any remaining chars
+                    while printed_idx < n_en:
+                        sys.stdout.write(chars_en[printed_idx])
+                        printed_idx += 1
+
                     sys.stdout.write(RESET + "\n")
                     sys.stdout.flush()
 
-                # Hindi Line
+                # Hindi Line (Word-based streaming to preserve Devanagari matras and conjuncts)
                 if args.mode in ("both", "hi"):
                     sub_indent = "     " if (is_hl and args.mode == "both") else ("    " if args.mode == "both" else f"{bullet}")
                     hi_color = SUNSET if color == GOLD else (LAVENDER if color == MAGENTA else ROSE)
@@ -533,8 +538,8 @@ def play():
                     sys.stdout.write(f"   {hi_color}{sub_indent}")
                     sys.stdout.flush()
 
-                    chars_hi = list(text_hi)
-                    n_hi = len(chars_hi)
+                    words_hi = text_hi.split(' ')
+                    n_hi = len(words_hi)
                     printed_idx = 0
 
                     hi_start_clk = (line_start_clk + type_duration * 0.45) if args.mode == "both" else line_start_clk
@@ -546,10 +551,11 @@ def play():
                             break
                         time_into = curr_elapsed - hi_start_clk
                         frac = min(1.0, max(0.0, time_into / max(0.1, hi_duration)))
-                        target_chars = int(frac * n_hi)
+                        target_words = int(frac * n_hi)
 
-                        while printed_idx < target_chars and printed_idx < n_hi:
-                            sys.stdout.write(chars_hi[printed_idx])
+                        while printed_idx < target_words and printed_idx < n_hi:
+                            separator = " " if printed_idx < n_hi - 1 else ""
+                            sys.stdout.write(words_hi[printed_idx] + separator)
                             printed_idx += 1
                             sys.stdout.flush()
 
@@ -557,7 +563,14 @@ def play():
                             break
                         time.sleep(0.02)
 
+                    # Flush any remaining words
+                    while printed_idx < n_hi:
+                        separator = " " if printed_idx < n_hi - 1 else ""
+                        sys.stdout.write(words_hi[printed_idx] + separator)
+                        printed_idx += 1
+
                     sys.stdout.write(RESET + "\n")
+                    sys.stdout.flush()
                     sys.stdout.flush()
 
                 # Blank line between stanzas for readability
